@@ -1,0 +1,1045 @@
+#!/bin/bash
+# secure the file permission creation
+umask 077
+# ==================================================
+_APP_SPECIFIC_NAME="Maxiclam"
+_APP_VERSION="1.0"
+_APP_STATUS="alpha"
+_APP_INFO="${_APP_SPECIFIC_NAME} is a bash script CLI extension that can manage both ClamAV antivirus and
+Linux Malware Detect (maldet) with extra features.
+Visit ClamAV official website at: https://www.clamav.net/ and visit Linux Malware Detect (maldet) official
+website at: https://www.rfxn.com/projects/linux-malware-detect/"
+_APP_VERSION_STATUS="${_APP_VERSION}-${_APP_STATUS}"
+_AUTHOR="Author: Arafat Ali | Email: arafat@sofibox.com | (C) 2019-2022"
+# ====================================================
+
+usage() {
+  local usage_file
+  usage_file="${SCRIPT_PATH}/readme.txt"
+  if [ -f "${usage_file}" ]; then
+    cat "${SCRIPT_PATH}/readme.txt"
+    echo ""
+  else
+    echo "Error, the usage file ${usage_file} does not exist."
+    exit 1
+  fi
+}
+
+# ask for confirmation
+# syntax:
+# _confirm <text_string> <default_response_key>
+# example:
+# _confirm are you sure you want to do this? y
+_confirm() {
+  local text default_response
+  text=$1
+  default_response=$2
+  if [ -z "${default_response}" ]; then
+    default_response="Y"
+  fi
+  read -r -p "${text} [default:${default_response}] [Y/n]: " response
+  # Simulate a default response so that we can press Enter key
+  if [[ -z "${response}" ]]; then
+    response="${default_response}"
+  fi
+  if [[ "$response" =~ ^([yY][eE][sS]|[yY])$ ]]; then
+    return 0
+  else
+    exit 0
+  fi
+}
+
+is_script_running() {
+  pgrep -lf ".[ /]$1( |\$)"
+}
+
+set_linux_crlf() {
+  local files retval
+  files="$*"
+  for file in ${files}; do
+    # shellcheck disable=SC2094
+    dos2unix -q <"${file}" | cmp -s - "${file}" 2>&1
+    retval=$?
+    if [ "${retval}" -ne 0 ]; then
+      echo -n "[${SCRIPT_NAME}]: Removing carriage return from custom rule file [ ${file} ] ..."
+      dos2unix -q "${file}"
+      get_status_message "$?"
+    fi
+  done
+}
+
+# syntax:
+# check_path "path1" "path2" "path3"
+check_path() {
+  local paths
+  paths="$*"
+  for path in ${paths}; do
+    if [ -f "${path}" ]; then
+      echo "[${SCRIPT_NAME}]: OK, the file path [ ${path} ] exists"
+      return 0
+    elif [ -d "${path}" ]; then
+      echo "[${SCRIPT_NAME}]: OK, the directory path [ ${path} ] exists"
+      return 0
+    elif [ -L "${path}" ]; then
+      echo "[${SCRIPT_NAME}]: OK, the symlink path [ ${path} ] exists"
+      return 0
+    elif [ -S "${path}" ]; then
+      echo "[${SCRIPT_NAME}]: OK, the socket path [ ${path} ] exists"
+      return 0
+    else
+      echo "[${SCRIPT_NAME}]: Error, the path [ ${path} ] does not exist!"
+      exit 1
+    fi
+  done
+}
+
+# This function is use to filter other processes not run this script if they are running
+ensure_free_process() {
+  local dnr_process_names
+  dnr_process_names=("clamscan maldet")
+  for dnr_process_name in "${dnr_process_names[@]}"; do
+    if is_script_running "${dnr_process_name}" >/dev/null; then
+      echo "[${SCRIPT_NAME}]: Warning, unable to run ${_APP_SPECIFIC_NAME} script because ${dnr_process_name} is on do not run list"
+      exit 1
+    fi
+  done
+}
+
+get_status_message() {
+  local retval
+  retval="$1"
+  if [[ "${retval}" -eq 0 ]]; then
+    echo " [ OK ]"
+  else
+    echo " [FAILED ]"
+    exit 1
+  fi
+}
+
+# TODO initialize all configs
+av_init () {
+  echo "TODO"
+}
+
+av_show_all_ignore_list() {
+
+  if [ "${AV_TYPE}" == "clamav" ]; then
+    echo ""
+    echo "[${SCRIPT_NAME}]: List of file excluded from scanning:"
+    if [ -s "${IGN_FILE_FILE}" ]; then
+      cat -n "${IGN_FILE_FILE}"
+    else
+      echo "[${IGN_FILE_FILE}] is empty!"
+    fi
+    echo "-------"
+    echo "[${SCRIPT_NAME}]: List of directory excluded from scanning:"
+    if [ -s "${IGN_DIR_FILE}" ]; then
+      cat -n "${IGN_DIR_FILE}"
+    else
+      echo "[${IGN_DIR_FILE}] is empty!"
+    fi
+    echo "-------"
+    echo "[${SCRIPT_NAME}]: List of extension excluded from scanning:"
+    if [ -s "${IGN_EXT_FILE}" ]; then
+      cat -n "${IGN_EXT_FILE}"
+    else
+      echo "[${IGN_EXT_FILE}] is empty!"
+    fi
+    echo "-------"
+    echo "[${SCRIPT_NAME}]: List of signature excluded from scanning:"
+    if [ -s "${IGN_SIGN_FILE}" ]; then
+      cat -n "${IGN_SIGN_FILE}"
+    else
+      echo "[${IGN_SIGN_FILE}] is empty!"
+    fi
+    echo "-------"
+    echo ""
+  elif [ "${AV_TYPE}" == "maldet" ]; then
+    echo ""
+    echo "[${SCRIPT_NAME}]: List of file/path excluded from scanning:"
+    if [ -s "${MALDET_IGN_PATH_FILE}" ]; then
+      cat -n "${MALDET_IGN_PATH_FILE}"
+    else
+      echo "[${MALDET_IGN_PATH_FILE}] is empty!"
+    fi
+    echo "-------"
+    echo "[${SCRIPT_NAME}]: List of extension excluded from scanning:"
+    if [ -s "${MALDET_IGN_EXT_FILE}" ]; then
+      cat -n "${MALDET_IGN_EXT_FILE}"
+    else
+      echo "[${MALDET_IGN_EXT_FILE}] is empty!"
+    fi
+    echo "-------"
+    echo "[${SCRIPT_NAME}]: List of signature excluded from scanning:"
+    if [ -s "${MALDET_IGN_SIGN_FILE}" ]; then
+      cat -n "${MALDET_IGN_SIGN_FILE}"
+    else
+      echo "[${MALDET_IGN_SIGN_FILE}] is empty!"
+    fi
+    echo "-------"
+    echo "[${SCRIPT_NAME}]: List of inotify excluded from scanning:"
+    if [ -s "${MALDET_IGN_INOTIFY_FILE}" ]; then
+      cat -n "${MALDET_IGN_INOTIFY_FILE}"
+    else
+      echo "[${MALDET_IGN_INOTIFY_FILE}] is empty!"
+    fi
+    echo "-------"
+    echo ""
+  else
+    echo "[${SCRIPT_NAME}]: Error, antivirus type is not supported!"
+    exit 1
+  fi
+}
+
+av_scan() {
+  local exclude_dir_option exclude_file_option exclude_ext_option verbose_level return_code scan_id
+  exclude_dir_option=""
+  exclude_file_option=""
+  exclude_ext_option=""
+
+  # Make sure existing av scanner is not running
+  ensure_free_process
+
+  if [ "${CRONJOB}" == "true" ]; then
+    RUN_MODE="cronjob"
+  else
+    RUN_MODE="manual"
+  fi
+
+  # If email option is not set or has invalid format, we give warning
+  if [ "${REPORT_EMAIL}" == "false" ]; then
+    echo "[${SCRIPT_NAME}]: Notice, report email is disabled because -e or --email option is not present!"
+  elif ! is_valid "email" "${REPORT_EMAIL}"; then
+    echo "[${SCRIPT_NAME}]: Notice, report email [ ${REPORT_EMAIL} ] is invalid, please set the correct email format eg: ADMIN_EMAIL=email@domain.tld"
+    exit 1
+  fi
+
+  echo ""
+
+  # Update virus definition first
+  # clamav_update
+  # Show scan ignore list before start scanning
+  av_show_all_ignore_list
+  # if the scan is clamav (the action 'scanx' is given)
+  if [ "${AV_TYPE}" == "clamav" ]; then
+
+    if [ "${SHOW_INFECTED_ONLY_OPTION}" == "-i" ]; then
+      echo "[${SCRIPT_NAME}]: Maxiclam scan option is set to -i or --infected, which means this scan only reporting infected files"
+    else
+      echo "[${SCRIPT_NAME}]: Maxiclam scan run without -i or --infected option. To report only infected files, supply the -i or --infected option"
+    fi
+
+    if [ -n "${IGN_DIR_STRING}" ]; then
+      exclude_dir_option="--exclude-dir=${IGN_DIR_STRING} "
+    fi
+    if [ -n "${IGN_FILE_STRING}" ]; then
+      exclude_file_option="--exclude=${IGN_FILE_STRING}"
+    fi
+
+    if [ -n "${IGN_EXT_STRING}" ]; then
+      exclude_ext_option="--exclude=${IGN_EXT_STRING} "
+    fi
+
+    if [[ "${DEBUG}" == "true" ]]; then
+      verbose_level="--debug"
+    elif [[ "${VERBOSE}" == "true" ]]; then
+      verbose_level="--verbose"
+    elif [[ "${QUIET}" == "true" ]]; then
+      verbose_level="--quiet"
+    else
+      verbose_level=""
+    fi
+
+    echo "[${SCRIPT_NAME}]: Commencing virus scan on [${SCAN_PATH}]... (this may take some time)"
+    "${CLAMAV_BIN}" ${verbose_level} ${exclude_dir_option} ${exclude_file_option} ${exclude_ext_option} -r "${SHOW_INFECTED_ONLY_OPTION}" "${SCAN_PATH}" --log="${REPORT_FILE}"
+    return_code=$?
+    echo "" | tee -a "${REPORT_FILE}"
+    # Return code 0 = no infected, return code 1 = infected
+    if [[ "${return_code}" -eq 0 ]]; then
+      echo "[${SCRIPT_NAME}]: Virus scan completed successfully" | tee -a "${REPORT_FILE}"
+      echo "[${SCRIPT_NAME}]: Running mode: [${RUN_MODE}]" | tee -a "${REPORT_FILE}"
+      echo "[${SCRIPT_NAME}]: Scan status: ${WARN_STATUS}" | tee -a "${REPORT_FILE}"
+      echo "[${SCRIPT_NAME}]: OK, NO INFECTIONS FOUND" | tee -a "${REPORT_FILE}"
+      echo "" | tee -a "${REPORT_FILE}"
+      echo "====================================================================================" | tee -a "${REPORT_FILE}"
+    elif [[ "${return_code}" -eq 1 ]]; then
+      WARN_STATUS="WARNING"
+      echo "[${SCRIPT_NAME}]: Running mode: [${RUN_MODE}]" | tee -a "${REPORT_FILE}"
+      echo "[${SCRIPT_NAME}]: Scan status: ${WARN_STATUS}" | tee -a "${REPORT_FILE}"
+      echo "[${SCRIPT_NAME}]: List of Infected files: " | tee -a "${REPORT_FILE}"
+      echo "" | tee -a "${REPORT_FILE}"
+      grep 'FOUND$' "${REPORT_FILE}" | tee -a "${REPORT_FILE}"
+      echo "" | tee -a "${REPORT_FILE}"
+      echo "[${SCRIPT_NAME}]: Warning, INFECTIONS FOUND at [${SCAN_PATH}] (please review the log file at: ${REPORT_FILE})" | tee -a "${REPORT_FILE}"
+      echo "" | tee -a "${REPORT_FILE}"
+      echo "====================================================================================" | tee -a "${REPORT_FILE}"
+    else
+      WARN_STATUS="WARNING"
+      echo "[${SCRIPT_NAME}]: Error, virus scan return error code ${return_code}!" | tee -a "${REPORT_FILE}"
+      echo "[${SCRIPT_NAME}]: Please inspect the log file at: ${REPORT_FILE}" | tee -a "${REPORT_FILE}"
+      echo "" | tee -a "${REPORT_FILE}"
+      echo "====================================================================================" | tee -a "${REPORT_FILE}"
+    fi
+  # If the scan is maldet ( the action 'scan' is given)
+  elif [ "${AV_TYPE}" == "maldet" ]; then
+    echo "[${SCRIPT_NAME}]: Commencing virus scan on [${SCAN_PATH}]... (this may take some time)"
+    "${MALDET_BIN}" --scan-all "${SCAN_PATH}" | tee -a "${REPORT_FILE}"
+    return_code=$?
+
+    echo "" | tee -a "${REPORT_FILE}"
+    # Return code 0 = no infected, return code 1 = infected
+    if [[ "${return_code}" -eq 0 ]]; then
+      echo "[${SCRIPT_NAME}]: Virus scan completed successfully" | tee -a "${REPORT_FILE}"
+      echo "[${SCRIPT_NAME}]: Running mode: [${RUN_MODE}]" | tee -a "${REPORT_FILE}"
+      echo "[${SCRIPT_NAME}]: Scan status: ${WARN_STATUS}" | tee -a "${REPORT_FILE}"
+      echo "[${SCRIPT_NAME}]: OK, NO INFECTIONS FOUND" | tee -a "${REPORT_FILE}"
+      echo "" | tee -a "${REPORT_FILE}"
+      echo "====================================================================================" | tee -a "${REPORT_FILE}"
+    elif [[ "${return_code}" -eq 2 ]]; then
+      WARN_STATUS="WARNING"
+      echo "[${SCRIPT_NAME}]: Running mode: [${RUN_MODE}]" | tee -a "${REPORT_FILE}"
+      echo "[${SCRIPT_NAME}]: Scan status: ${WARN_STATUS}" | tee -a "${REPORT_FILE}"
+      echo "[${SCRIPT_NAME}]: List of Infected files: " | tee -a "${REPORT_FILE}"
+      echo "" | tee -a "${REPORT_FILE}"
+      scan_id=$(awk '/to view run: maldet --report/{print $NF}' "${REPORT_FILE}")
+      awk '/FILE HIT LIST:/,/===============================================/' "/usr/local/maldetect/sess/session.${scan_id}"
+      echo "" | tee -a "${REPORT_FILE}"
+      echo "[${SCRIPT_NAME}]: Warning, INFECTIONS FOUND at [${SCAN_PATH}] (please review the log file at: ${REPORT_FILE})" | tee -a "${REPORT_FILE}"
+      echo "" | tee -a "${REPORT_FILE}"
+      echo "====================================================================================" | tee -a "${REPORT_FILE}"
+    else
+      WARN_STATUS="WARNING"
+      echo "[${SCRIPT_NAME}]: Error, virus scan return error code ${return_code}!" | tee -a "${REPORT_FILE}"
+      echo "[${SCRIPT_NAME}]: Please inspect the log file at: ${REPORT_FILE}" | tee -a "${REPORT_FILE}"
+      echo "" | tee -a "${REPORT_FILE}"
+      echo "====================================================================================" | tee -a "${REPORT_FILE}"
+    fi
+  fi
+
+  if [[ "${WARN_STATUS}" == "WARNING" && "${REPORT_EMAIL}" != "false" ]]; then
+    echo "[${SCRIPT_NAME}]: Sending email report to ${ADMIN_EMAIL} ..."
+    "${MAIL_BIN}" -s "[${SCRIPT_NAME}]: Virus Scan Report from ${BOX_HOSTNAME} at [${SCAN_PATH}]" "${ADMIN_EMAIL}" <"${REPORT_FILE}"
+    get_status_message "$?"
+  fi
+
+}
+
+av_update() {
+  # Only update maldet if binary is found because this is optional
+  if command -v maldet &>/dev/null; then
+
+    echo "[${SCRIPT_NAME}]: Updating maldet antivirus version ..."
+    echo ""
+    ${MALDET_BIN} --update-ver
+    get_status_message "$?"
+    echo ""
+    echo "[${SCRIPT_NAME}]: Updating maldet antivirus database ..."
+    echo ""
+    ${MALDET_BIN} --update-sigs
+    get_status_message "$?"
+
+  fi
+  # freshclam is a virus database update tool for ClamAV.
+  echo "[${SCRIPT_NAME}]: Updating ClamAV antivirus database ..."
+  echo ""
+  ${CLAMAV_UPDATE_BIN} --show-progress
+  get_status_message "$?"
+
+}
+
+av_file_list() {
+
+  if [ "${AV_TYPE}" == "maldet" ]; then
+    echo "[${SCRIPT_NAME}]: List of excluded file/path of maldet [${MALDET_IGN_PATH_FILE}] from scanning:"
+    echo "-------"
+    if [ -s "${MALDET_IGN_PATH_FILE}" ]; then
+      cat -n "${MALDET_IGN_PATH_FILE}"
+    else
+      echo "[${MALDET_IGN_PATH_FILE}] is empty"
+    fi
+    echo "-------"
+  elif [ "${AV_TYPE}" == "clamav" ]; then
+    echo "[${SCRIPT_NAME}]: List of excluded file of clamav [${IGN_FILE_FILE}] from scanning:"
+    echo "-------"
+    if [ -s "${IGN_FILE_FILE}" ]; then
+      cat -n "${IGN_FILE_FILE}"
+    else
+      echo "[${IGN_FILE_FILE}] is empty"
+    fi
+    echo "-------"
+
+  fi
+}
+
+av_dir_list() {
+  if [ "${AV_TYPE}" == "maldet" ]; then
+    echo "[${SCRIPT_NAME}]: List of excluded file/path of maldet [${MALDET_IGN_PATH_FILE}] from scanning:"
+    echo "-------"
+    if [ -s "${MALDET_IGN_PATH_FILE}" ]; then
+      cat -n "${MALDET_IGN_PATH_FILE}"
+    else
+      echo "[${MALDET_IGN_PATH_FILE}] is empty"
+    fi
+    echo "-------"
+
+  elif [ "${AV_TYPE}" == "clamav" ]; then
+    echo "[${SCRIPT_NAME}]: List of excluded directory of clamav [${IGN_DIR_FILE}] from scanning:"
+    echo "-------"
+    if [ -s "${IGN_DIR_FILE}" ]; then
+      cat -n "${IGN_DIR_FILE}"
+    else
+      echo "[${IGN_DIR_FILE}] is empty"
+    fi
+    echo "-------"
+
+  fi
+
+}
+
+av_ext_list() {
+  if [ "${AV_TYPE}" == "maldet" ]; then
+    echo "[${SCRIPT_NAME}]: List of excluded extension of maldet [${MALDET_IGN_EXT_FILE}] from scanning:"
+    echo "-------"
+    if [ -s "${MALDET_IGN_EXT_FILE}" ]; then
+      cat -n "${MALDET_IGN_EXT_FILE}"
+    else
+      echo "[${MALDET_IGN_EXT_FILE}] is empty"
+    fi
+    echo "-------"
+  elif [ "${AV_TYPE}" == "clamav" ]; then
+    echo "[${SCRIPT_NAME}]: List of excluded extension of clamav [${IGN_EXT_FILE}] from scanning:"
+    echo "-------"
+    if [ -s "${IGN_EXT_FILE}" ]; then
+      cat -n "${IGN_EXT_FILE}"
+    else
+      echo "[${IGN_EXT_FILE}] is empty"
+    fi
+    echo "-------"
+  fi
+
+}
+
+av_sign_list() {
+  if [ "${AV_TYPE}" == "maldet" ]; then
+    echo "[${SCRIPT_NAME}]: List of excluded signature of maldet [${MALDET_IGN_SIGN_FILE}] from scanning:"
+    echo "-------"
+    if [ -s "${MALDET_IGN_SIGN_FILE}" ]; then
+      cat -n "${MALDET_IGN_SIGN_FILE}"
+    else
+      echo "[${MALDET_IGN_SIGN_FILE}] is empty"
+    fi
+    echo "-------"
+  elif [ "${AV_TYPE}" == "clamav" ]; then
+    echo "[${SCRIPT_NAME}]: List of excluded signature of clamav [${IGN_EXT_FIGN_SIGN_FILEILE}] from scanning:"
+    echo "-------"
+    if [ -s "${IGN_SIGN_FILE}" ]; then
+      cat -n "${IGN_SIGN_FILE}"
+    else
+      echo "[${IGN_SIGN_FILE}] is empty"
+    fi
+    echo "-------"
+  fi
+}
+
+# for maldet only to show list of ignored inotify
+av_inot_list() {
+
+  echo "[${SCRIPT_NAME}]: List of excluded inotify of maldet [${MALDET_IGN_INOTIFY_FILE}] from scanning:"
+  echo "-------"
+  if [ -s "${MALDET_IGN_INOTIFY_FILE}" ]; then
+    cat -n "${MALDET_IGN_INOTIFY_FILE}"
+  else
+    echo "[${MALDET_IGN_INOTIFY_FILE}] is empty"
+  fi
+  echo "-------"
+}
+
+ADMIN_EMAIL="webmaster@sofibox.com"
+SCRIPT_PATH="$(dirname "$(readlink -f "$0")")"
+SCRIPT_NAME=$(basename -- "$0")
+BOX_HOSTNAME=$(hostname)
+MAIL_BIN=$(command -v mail)
+#DATE_BIN=$(command -v date)
+
+BIN_DEPS="clamscan freshclam"
+for BIN_DEP in $BIN_DEPS; do
+  which "${BIN_DEP}" >/dev/null ||
+    NOT_FOUND="${BIN_DEP} ${NOT_FOUND}"
+done
+
+if [ -n "${NOT_FOUND}" ]; then
+  echo -e "Error: Required program could not be found: ${NOT_FOUND}"
+  exit 1
+fi
+
+CLAMAV_BIN=$(command -v clamscan)
+MALDET_BIN=$(command -v maldet)
+CLAMAV_UPDATE_BIN=$(command -v freshclam)
+
+LOG_PATH="${SCRIPT_PATH}/log"
+CONFIG_PATH="${SCRIPT_PATH}/conf"
+DB_PATH="${SCRIPT_PATH}/db"
+TEMP_PATH="${SCRIPT_PATH}/tmp"
+
+mkdir -p "${LOG_PATH}"
+mkdir -p "${CONFIG_PATH}"
+mkdir -p "${DB_PATH}"
+mkdir -p "${TEMP_PATH}"
+
+CLAMAV_DB_PATH="/usr/local/share/clamav"
+MALDET_PATH="/usr/local/maldetect"
+# File to ignore extension list for clamav
+IGN_EXT_FILE="${CONFIG_PATH}/ext.ign"
+# File to ignore directory list for clamav
+IGN_DIR_FILE="${CONFIG_PATH}/dir.ign"
+# File to ignore file list for clamav
+IGN_FILE_FILE="${CONFIG_PATH}/file.ign"
+# File to ignore signature for clamav
+IGN_SIGN_FILE="${CLAMAV_DB_PATH}/whitelist.ign2"
+
+# File to ignore extension list for maldet
+MALDET_IGN_EXT_FILE="${MALDET_PATH}/ignore_file_ext"
+# File to ignore file/dir/paths list for maldet
+MALDET_IGN_PATH_FILE="${MALDET_PATH}/ignore_paths"
+# File to ignore signature list for maldet
+MALDET_IGN_SIGN_FILE="${MALDET_PATH}/ignore_sigs"
+# File to ignore inotify list for maldet
+MALDET_IGN_INOTIFY_FILE="${MALDET_PATH}/ignore_inotify"
+
+touch "${IGN_EXT_FILE}"
+touch "${IGN_DIR_FILE}"
+touch "${IGN_FILE_FILE}"
+touch "${IGN_SIGN_FILE}"
+
+touch "${MALDET_IGN_EXT_FILE}"
+touch "${MALDET_IGN_PATH_FILE}"
+touch "${MALDET_IGN_SIGN_FILE}"
+touch "${MALDET_IGN_INOTIFY_FILE}"
+
+IGN_EXT_STRING='\.('"$(paste -d'|' -s "${IGN_EXT_FILE}")"')$'
+IGN_DIR_STRING=$(paste -d'|' -s "${IGN_DIR_FILE}")
+IGN_FILE_STRING=$(paste -d'|' -s "${IGN_FILE_FILE}")
+
+DATE_TIME_NOW="$(date '+%d-%m-%Y_%H-%M-%S')" #31-03-2020_11-56-16
+#MONTH_NOW=$(date +%B)
+#DATE_NOW="$(date '+%d-%m-%Y')" #31-03-2020
+# REPORT FILES
+REPORT_FILE="${LOG_PATH}/${SCRIPT_NAME}-${DATE_TIME_NOW}-report.log"
+
+# STATUS VARIABLE
+RUN_MODE="N/A"
+WARN_STATUS="OK"
+
+RETVAL=1
+ACTION="$1"
+ARGNUM="$#"
+
+# default scanner
+if command -v maldet &>/dev/null; then
+  AV_TYPE="maldet"
+else
+  AV_TYPE="clamav"
+fi
+
+if [ $ARGNUM -eq 0 ]; then
+  echo "[${SCRIPT_NAME}]: Error, no argument is supplied. Use [ ${SCRIPT_NAME} --help ] to see the valid options"
+  exit 2
+fi
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+  # Display help and usage
+  -h | --help | help | /? | ?)
+    usage
+    exit 0
+    ;;
+    # Display Program version
+  -v | -V | --version | version | ver)
+    echo ""
+    echo "${_APP_INFO}"
+    echo ""
+    echo "ClamAV version: $(${CLAMAV_BIN} -V)"
+    echo "Linux Malware Detect (maldet) version: $(${MALDET_BIN} | head -n1)"
+    echo ""
+    echo "Script version: ${_APP_SPECIFIC_NAME}-${_APP_VERSION_STATUS}"
+    echo "Script author: ${_AUTHOR}"
+
+    exit 0
+    break
+    ;;
+  -t | --test | test)
+    # This is a placeholder for test
+    exit 0
+    break
+    ;;
+  init | --init)
+    av_init
+    exit 0
+    break
+    ;;
+  # For self script editing purpose
+  edit-self | edit-script | edit-code | update-code | show-script | editself | editscript | editcode | updatecode | showscript | edit)
+    nano -c "${SCRIPT_PATH}/${SCRIPT_NAME}"
+    exit 0
+    break
+    ;;
+  latest-log | latest-report | last-report | lastlog | lastreport | latestreport)
+    latest_log=$(find "${LOG_PATH}" -type f -printf "%T@ %p\n" | sort -n | cut -d' ' -f 2- | tail -n 1)
+    echo "Reading the latest log ..."
+    more "${latest_log}"
+    exit 0
+    break
+    ;;
+  clean-logs | cleanlog | clearlog | removelog)
+    # Remove old logs but leave the latest 1 log
+    _confirm "[${SCRIPT_NAME}]: Are you sure you want to remove old logs?" N
+    find "${LOG_PATH}" -maxdepth 1 -type f -printf '%T@ %p\0' |
+      sort -z -nrt ' ' -k1,1 |
+      sed -z -e "1,1d" -e 's/[^ ]* //' |
+      xargs -0r rm -f
+    get_status_message "$?"
+    break
+    ;;
+  file-list | list-file)
+    SHORT_OPTS="e,v"
+    LONG_OPTS="view,show,view-maldet,view-clamav,show-maldet,show-clamav,edit,edit-maldet,edit-clamav,clear,clear-maldet,clear-clamav"
+    OPTIONS=$(getopt -o "${SHORT_OPTS}" --long "${LONG_OPTS}" -n "[${SCRIPT_NAME}]" -- "$@")
+    RETVAL=$?
+    if [ ${RETVAL} != 0 ]; then
+      echo "[${SCRIPT_NAME}]: Error, invalid option"
+      exit 1
+    fi
+    eval set -- "${OPTIONS}"
+    while true; do
+      case "$1" in
+
+      --edit | --edit-maldet)
+        AV_TYPE="maldet"
+        nano -c "${MALDET_IGN_PATH_FILE}"
+        av_file_list
+        exit 0
+        break
+        ;;
+      --edit-clamav)
+        AV_TYPE="clamav"
+        nano -c "${IGN_FILE_FILE}"
+        av_file_list
+        exit 0
+        break
+        ;;
+      --clear | --clear-maldet)
+        AV_TYPE="maldet"
+        _confirm "Are you sure you want to clear all the ignored file/path list of maldet at ${MALDET_IGN_PATH_FILE}? "
+        cat /dev/null >"${MALDET_IGN_PATH_FILE}"
+        get_status_message "$?"
+        break
+        ;;
+      --clear-clamav)
+        AV_TYPE="clamav"
+        _confirm "Are you sure you want to clear all the ignored file list of clamav at ${IGN_FILE_FILE}? "
+        cat /dev/null >"${IGN_FILE_FILE}"
+        get_status_message "$?"
+        break
+        ;;
+      --view | --show | --view-maldet | --show-maldet)
+        AV_TYPE="maldet"
+        av_file_list
+        break
+        ;;
+      --view-clamv | --show-clamav)
+        AV_TYPE="clamav"
+        av_file_list
+        break
+        ;;
+      --)
+        shift
+        break
+        ;;
+      -*)
+        echo "[${SCRIPT_NAME}]: Error, invalid option e.g: ${SCRIPT_NAME} ${ACTION}"
+        exit 1
+        ;;
+      *)
+        break
+        ;;
+      esac
+    done
+    break
+    ;;
+  dir-list | list-dir | directory-list | list-directory)
+    SHORT_OPTS="e,v"
+    LONG_OPTS="view,show,view-maldet,view-clamav,show-maldet,show-clamav,edit,edit-maldet,edit-clamav,clear,clear-maldet,clear-clamav"
+    OPTIONS=$(getopt -o "${SHORT_OPTS}" --long "${LONG_OPTS}" -n "[${SCRIPT_NAME}]" -- "$@")
+    RETVAL=$?
+    if [ ${RETVAL} != 0 ]; then
+      echo "[${SCRIPT_NAME}]: Error, invalid option"
+      exit 1
+    fi
+    eval set -- "${OPTIONS}"
+    while true; do
+      case "$1" in
+      --edit | --edit-maldet)
+        AV_TYPE="maldet"
+        nano -c "${MALDET_IGN_PATH_FILE}"
+        av_dir_list
+        exit 0
+        break
+        ;;
+      --edit-clamav)
+        AV_TYPE="clamav"
+        nano -c "${IGN_DIR_FILE}"
+        av_dir_list
+        exit 0
+        break
+        ;;
+      --clear | --clear-maldet)
+        AV_TYPE="maldet"
+        _confirm "Are you sure you want to clear all the ignored file/path list of maldet at ${MALDET_IGN_PATH_FILE}? "
+        cat /dev/null >"${MALDET_IGN_PATH_FILE}"
+        get_status_message "$?"
+        break
+        ;;
+      --clear-clamav)
+        AV_TYPE="clamav"
+        _confirm "Are you sure you want to clear all the ignored directory list of clamav at ${IGN_DIR_FILE}? "
+        cat /dev/null >"${IGN_DIR_FILE}"
+        get_status_message "$?"
+        break
+        ;;
+
+      --view | --show | --view-maldet | --show-maldet)
+        AV_TYPE="maldet"
+        av_dir_list
+        break
+        ;;
+
+      --view-clamav | --show-clamav)
+        AV_TYPE="clamav"
+        av_dir_list
+        break
+        ;;
+      --)
+        shift
+        break
+        ;;
+      -*)
+        echo "[${SCRIPT_NAME}]: Error, invalid option e.g: ${SCRIPT_NAME} ${ACTION}"
+        exit 1
+        ;;
+      *)
+        break
+        ;;
+      esac
+    done
+    break
+    ;;
+
+  ext-list | list-ext | extension-list | list-extension)
+    SHORT_OPTS="e,v"
+    LONG_OPTS="view,show,view-maldet,view-clamav,show-maldet,show-clamav,edit,edit-maldet,edit-clamav,clear,clear-maldet,clear-clamav"
+    OPTIONS=$(getopt -o "${SHORT_OPTS}" --long "${LONG_OPTS}" -n "[${SCRIPT_NAME}]" -- "$@")
+    RETVAL=$?
+    if [ ${RETVAL} != 0 ]; then
+      echo "[${SCRIPT_NAME}]: Error, invalid option"
+      exit 1
+    fi
+    eval set -- "${OPTIONS}"
+    while true; do
+      case "$1" in
+      --edit | --edit-maldet)
+        AV_TYPE="maldet"
+        nano -c "${MALDET_IGN_EXT_FILE}"
+        av_ext_list
+        exit 0
+        break
+        ;;
+      --edit-clamav)
+        AV_TYPE="clamav"
+        nano -c "${IGN_EXT_FILE}"
+        av_ext_list
+        exit 0
+        break
+        ;;
+      --clear | --clear-maldet)
+        AV_TYPE="maldet"
+        _confirm "Are you sure you want to clear all the ignored extension list of maldet at ${MALDET_IGN_EXT_FILE}? "
+        cat /dev/null >"${MALDET_IGN_EXT_FILE}"
+        get_status_message "$?"
+        break
+        ;;
+      --clear-clamav)
+        AV_TYPE="clamav"
+        _confirm "Are you sure you want to clear all the ignored extension list of clamav at ${IGN_EXT_FILE}? "
+        cat /dev/null >"${IGN_EXT_FILE}"
+        get_status_message "$?"
+        break
+        ;;
+      --view | --show | --view-maldet | --show-maldet)
+        AV_TYPE="maldet"
+        av_ext_list
+        break
+        ;;
+      --view-clamav | --show-clamav)
+        AV_TYPE="clamav"
+        av_ext_list
+        break
+        ;;
+      --)
+        shift
+        break
+        ;;
+      -*)
+        echo "[${SCRIPT_NAME}]: Error, invalid option e.g: ${SCRIPT_NAME} ${ACTION}"
+        exit 1
+        ;;
+      *)
+        break
+        ;;
+      esac
+    done
+    break
+    ;;
+
+  sign-list | list-sign | signature-list | list-signature)
+    SHORT_OPTS="e,v"
+    LONG_OPTS="view,show,view-maldet,view-clamav,show-maldet,view-clamav,edit,edit-maldet,edit-clamav,clear,clear-maldet,clear-clamav"
+    OPTIONS=$(getopt -o "${SHORT_OPTS}" --long "${LONG_OPTS}" -n "[${SCRIPT_NAME}]" -- "$@")
+    RETVAL=$?
+    if [ ${RETVAL} != 0 ]; then
+      echo "[${SCRIPT_NAME}]: Error, invalid option"
+      exit 1
+    fi
+    eval set -- "${OPTIONS}"
+    while true; do
+      case "$1" in
+      --edit | --edit-maldet)
+        AV_TYPE="maldet"
+        nano -c "${MALDET_IGN_SIGN_FILE}"
+        av_sign_list
+        exit 0
+        break
+        ;;
+      --edit-clamav)
+        AV_TYPE="clamav"
+        nano -c "${IGN_SIGN_FILE}"
+        av_sign_list
+        exit 0
+        break
+        ;;
+      --clear | --clear-maldet)
+        AV_TYPE="maldet"
+        _confirm "Are you sure you want to clear all the ignored signature list of maldet at ${MALDET_IGN_SIGN_FILE}? "
+        cat /dev/null >"${IGN_SIGN_FILE}"
+        get_status_message "$?"
+        break
+        ;;
+      --clear-clamav)
+        AV_TYPE="clamav"
+        _confirm "Are you sure you want to clear all the ignored signature list of clamav at ${IGN_SIGN_FILE}? "
+        cat /dev/null >"${IGN_SIGN_FILE}"
+        get_status_message "$?"
+        break
+        ;;
+      --view | --show | --view-maldet | --show-maldet)
+        AV_TYPE="maldet"
+        av_sign_list
+        break
+        ;;
+      --view-clamav | --show-clamav)
+        AV_TYPE="clamav"
+        av_sign_list
+        break
+        ;;
+      --)
+        shift
+        break
+        ;;
+      -*)
+        echo "[${SCRIPT_NAME}]: Error, invalid option e.g: ${SCRIPT_NAME} ${ACTION}"
+        exit 1
+        ;;
+      *)
+        break
+        ;;
+      esac
+    done
+    break
+    ;;
+  # This is for maldet only to manage inotify ignored list
+  inot-list | list-inot | inotify-list | list-inotify)
+    SHORT_OPTS="e,v"
+    LONG_OPTS="view,show,view-maldet,show-maldet,edit,edit-maldet,clear,clear-maldet"
+    OPTIONS=$(getopt -o "${SHORT_OPTS}" --long "${LONG_OPTS}" -n "[${SCRIPT_NAME}]" -- "$@")
+    RETVAL=$?
+    if [ ${RETVAL} != 0 ]; then
+      echo "[${SCRIPT_NAME}]: Error, invalid option"
+      exit 1
+    fi
+    eval set -- "${OPTIONS}"
+    while true; do
+      case "$1" in
+      --edit | --edit-maldet)
+        AV_TYPE="maldet"
+        nano -c "${MALDET_IGN_INOTIFY_FILE}"
+        av_inot_list
+        exit 0
+        break
+        ;;
+      --clear | --clear-maldet)
+        AV_TYPE="maldet"
+        _confirm "Are you sure you want to clear all the ignored inotify list of maldet at ${MALDET_IGN_INOTIFY_FILE}? "
+        cat /dev/null >"${IGN_SIGN_FILE}"
+        get_status_message "$?"
+        break
+        ;;
+      --view | --show | --view-maldet | --show-maldet)
+        AV_TYPE="maldet"
+        av_inot_list
+        break
+        ;;
+      --)
+        shift
+        break
+        ;;
+      -*)
+        echo "[${SCRIPT_NAME}]: Error, invalid option e.g: ${SCRIPT_NAME} ${ACTION}"
+        exit 1
+        ;;
+      *)
+        break
+        ;;
+      esac
+    done
+    break
+    ;;
+
+  update)
+    av_update "$@"
+    break
+    ;;
+  # For maldet scanner (scan)
+  scan | maldet)
+    SHORT_OPTS="j,e,p:"
+    LONG_OPTS="cron,cronjob,email,path:,scan-path:"
+    OPTIONS=$(getopt -o "${SHORT_OPTS}" --long "${LONG_OPTS}" -n "[${SCRIPT_NAME}]" -- "$@")
+    RETVAL=$?
+    if [ ${RETVAL} != 0 ]; then
+      echo "[${SCRIPT_NAME}]: Error, invalid option"
+      exit 1
+    fi
+    eval set -- "${OPTIONS}"
+    CRONJOB=false
+    VERBOSE=false
+    DEBUG=false
+    SCAN_PATH=$(pwd)
+    REPORT_EMAIL=false
+    AV_TYPE="maldet"
+    while true; do
+      case "$1" in
+      -j | --cron | --cronjob)
+        CRONJOB=true
+        shift
+        ;;
+      -p | --path | --scan-path)
+        SCAN_PATH="$2"
+        check_path "${SCAN_PATH}"
+        shift 2
+        ;;
+      -e | --email)
+        REPORT_EMAIL="${ADMIN_EMAIL}"
+        shift
+        ;;
+      --)
+        shift
+        break
+        ;;
+      -*)
+        echo "[${SCRIPT_NAME}]: Error, invalid option e.g: ${SCRIPT_NAME} ${ACTION}"
+        exit 1
+        ;;
+      *)
+        break
+        ;;
+      esac
+    done
+    av_scan "$@"
+    break
+    ;;
+  # legacy scan for clamav scanner (scanx)
+  scanx | clamav)
+    SHORT_OPTS="j,v,d,q,e,p:,i"
+    LONG_OPTS="cron,cronjob,verbose,debug,quiet,email,path:,scan-path:,infected,show-infected-only"
+    OPTIONS=$(getopt -o "${SHORT_OPTS}" --long "${LONG_OPTS}" -n "[${SCRIPT_NAME}]" -- "$@")
+    RETVAL=$?
+    if [ ${RETVAL} != 0 ]; then
+      echo "[${SCRIPT_NAME}]: Error, invalid option"
+      exit 1
+    fi
+    eval set -- "${OPTIONS}"
+    CRONJOB=false
+    VERBOSE=false
+    DEBUG=false
+    SCAN_PATH=$(pwd)
+    REPORT_EMAIL=false
+    SHOW_INFECTED_ONLY_OPTION=""
+    AV_TYPE="clamav"
+    while true; do
+      case "$1" in
+      -j | --cron | --cronjob)
+        CRONJOB=true
+        shift
+        ;;
+      -v | --verbose)
+        VERBOSE=true
+        shift
+        ;;
+      -d | --debug)
+        DEBUG=true
+        shift
+        ;;
+      -q | --log-quiet)
+        QUIET=true
+        shift
+        ;;
+      -p | --path | --scan-path)
+        SCAN_PATH="$2"
+        check_path "${SCAN_PATH}"
+        shift 2
+        ;;
+      -e | --email)
+        REPORT_EMAIL="${ADMIN_EMAIL}"
+        shift
+        ;;
+
+      -i | --infected | show-infected-only)
+        SHOW_INFECTED_ONLY_OPTION="-i"
+        shift
+        ;;
+      --)
+        shift
+        break
+        ;;
+      -*)
+        echo "[${SCRIPT_NAME}]: Error, invalid option e.g: ${SCRIPT_NAME} ${ACTION}"
+        exit 1
+        ;;
+      *)
+        break
+        ;;
+      esac
+    done
+    av_scan "$@"
+    break
+    ;;
+  --)
+    break
+    ;;
+  -*)
+    echo "[${SCRIPT_NAME}]: Invalid action or option $1. Use --help to see the valid options"
+    exit 1
+    ;;
+  *) ;;
+  esac
+  echo "[${SCRIPT_NAME}]: Error, invalid action or option [ $1 ]. Use --help to see the valid actions or options"
+  exit 1
+done
