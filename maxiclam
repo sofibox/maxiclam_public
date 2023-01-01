@@ -476,17 +476,6 @@ BOX_HOSTNAME=$(hostname)
 MAIL_BIN=$(command -v mail)
 #DATE_BIN=$(command -v date)
 
-BIN_DEPS="clamscan freshclam"
-for BIN_DEP in $BIN_DEPS; do
-  which "${BIN_DEP}" >/dev/null ||
-    NOT_FOUND="${BIN_DEP} ${NOT_FOUND}"
-done
-
-if [ -n "${NOT_FOUND}" ]; then
-  echo -e "Error: Required program could not be found: ${NOT_FOUND}"
-  exit 1
-fi
-
 CLAMAV_BIN=$(command -v clamscan)
 MALDET_BIN=$(command -v maldet)
 CLAMAV_UPDATE_BIN=$(command -v freshclam)
@@ -573,8 +562,18 @@ while [ "$#" -gt 0 ]; do
     echo ""
     echo "${_APP_INFO}"
     echo ""
-    echo "ClamAV version: $(${CLAMAV_BIN} -V)"
-    echo "Linux Malware Detect (maldet) version: $(${MALDET_BIN} | head -n1)"
+    if command -v clamscan &>/dev/null; then
+      echo "ClamAV version: $(${CLAMAV_BIN} -V)"
+    else
+      echo "Error, ClamAV not found!"
+    fi
+
+    if command -v maldet &>/dev/null; then
+      echo "Linux Malware Detect (maldet) version: $(${MALDET_BIN} | head -n1)"
+    else
+      echo "Error, Maldet not found!"
+    fi
+
     echo ""
     echo "Script version: ${_APP_SPECIFIC_NAME}-${_APP_VERSION_STATUS}"
     echo "Script author: ${_AUTHOR}"
@@ -934,6 +933,16 @@ while [ "$#" -gt 0 ]; do
     ;;
   # For maldet scanner (scan)
   scan | maldet)
+    BIN_DEPS="maldet"
+    for BIN_DEP in $BIN_DEPS; do
+      which "${BIN_DEP}" >/dev/null ||
+        NOT_FOUND="${BIN_DEP} ${NOT_FOUND}"
+    done
+
+    if [ -n "${NOT_FOUND}" ]; then
+      echo -e "Error: Required program could not be found: ${NOT_FOUND}"
+      exit 1
+    fi
     SHORT_OPTS="j,e,p:"
     LONG_OPTS="cron,cronjob,email,path:,scan-path:"
     OPTIONS=$(getopt -o "${SHORT_OPTS}" --long "${LONG_OPTS}" -n "[${SCRIPT_NAME}]" -- "$@")
@@ -982,6 +991,16 @@ while [ "$#" -gt 0 ]; do
     ;;
   # legacy scan for clamav scanner (scanx)
   scanx | clamav)
+    BIN_DEPS="clamscan"
+    for BIN_DEP in $BIN_DEPS; do
+      which "${BIN_DEP}" >/dev/null ||
+        NOT_FOUND="${BIN_DEP} ${NOT_FOUND}"
+    done
+
+    if [ -n "${NOT_FOUND}" ]; then
+      echo -e "Error: Required program could not be found: ${NOT_FOUND}"
+      exit 1
+    fi
     SHORT_OPTS="j,v,d,q,e,p:,i"
     LONG_OPTS="cron,cronjob,verbose,debug,quiet,email,path:,scan-path:,infected,show-infected-only"
     OPTIONS=$(getopt -o "${SHORT_OPTS}" --long "${LONG_OPTS}" -n "[${SCRIPT_NAME}]" -- "$@")
