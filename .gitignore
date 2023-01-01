@@ -1,3 +1,7 @@
 .idea
 .gitignore
 maxiclam.conf
+conf/dir.ign
+conf/ext.ign
+conf/file.ign
+conf/sign.ign

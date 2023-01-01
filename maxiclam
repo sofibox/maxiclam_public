@@ -3,7 +3,7 @@
 umask 077
 # ==================================================
 _APP_SPECIFIC_NAME="Maxiclam"
-_APP_VERSION="1.1"
+_APP_VERSION="1.2"
 _APP_STATUS="alpha"
 _APP_INFO="${_APP_SPECIFIC_NAME} is a bash script CLI extension that can manage both ClamAV antivirus and
 Linux Malware Detect (maldet) with extra features.
@@ -445,7 +445,7 @@ av_sign_list() {
     fi
     echo "-------"
   elif [ "${AV_TYPE}" == "clamav" ]; then
-    echo "[${SCRIPT_NAME}]: List of excluded signature of clamav [${IGN_EXT_FIGN_SIGN_FILEILE}] from scanning:"
+    echo "[${SCRIPT_NAME}]: List of excluded signature of clamav [${IGN_SIGN_FILE}] from scanning:"
     echo "-------"
     if [ -s "${IGN_SIGN_FILE}" ]; then
       cat -n "${IGN_SIGN_FILE}"
@@ -490,7 +490,15 @@ mkdir -p "${CONFIG_PATH}"
 mkdir -p "${DB_PATH}"
 mkdir -p "${TEMP_PATH}"
 
-CLAMAV_DB_PATH="/usr/local/share/clamav"
+if [ -d /usr/local/share/clamav ]; then
+  CLAMAV_DB_PATH="/usr/local/share/clamav"
+else
+  CLAMAV_DB_PATH="/var/lib/clamav"
+fi
+
+CLAMAV_USER_PERM="clamav"
+CLAMAV_GROUP_PERM="clamav"
+
 MALDET_PATH="/usr/local/maldetect"
 # File to ignore extension list for clamav
 IGN_EXT_FILE="${CONFIG_PATH}/ext.ign"
@@ -498,6 +506,8 @@ IGN_EXT_FILE="${CONFIG_PATH}/ext.ign"
 IGN_DIR_FILE="${CONFIG_PATH}/dir.ign"
 # File to ignore file list for clamav
 IGN_FILE_FILE="${CONFIG_PATH}/file.ign"
+# Temporary signature list to ignore
+TEMP_IGN_SIGN_FILE="${CONFIG_PATH}/sign.ign"
 # File to ignore signature for clamav
 IGN_SIGN_FILE="${CLAMAV_DB_PATH}/whitelist.ign2"
 
@@ -514,6 +524,11 @@ touch "${IGN_EXT_FILE}"
 touch "${IGN_DIR_FILE}"
 touch "${IGN_FILE_FILE}"
 touch "${IGN_SIGN_FILE}"
+
+chown "${CLAMAV_USER_PERM}:${CLAMAV_GROUP_PERM}" "${IGN_EXT_FILE}"
+chown "${CLAMAV_USER_PERM}:${CLAMAV_GROUP_PERM}" "${IGN_DIR_FILE}"
+chown "${CLAMAV_USER_PERM}:${CLAMAV_GROUP_PERM}" "${IGN_FILE_FILE}"
+chown "${CLAMAV_USER_PERM}:${CLAMAV_GROUP_PERM}" "${IGN_SIGN_FILE}"
 
 touch "${MALDET_IGN_EXT_FILE}"
 touch "${MALDET_IGN_PATH_FILE}"
@@ -573,7 +588,6 @@ while [ "$#" -gt 0 ]; do
     else
       echo "Error, Maldet not found!"
     fi
-
     echo ""
     echo "Script version: ${_APP_SPECIFIC_NAME}-${_APP_VERSION_STATUS}"
     echo "Script author: ${_AUTHOR}"
@@ -816,7 +830,7 @@ while [ "$#" -gt 0 ]; do
 
   sign-list | list-sign | signature-list | list-signature)
     SHORT_OPTS="e,v"
-    LONG_OPTS="view,show,view-maldet,view-clamav,show-maldet,view-clamav,edit,edit-maldet,edit-clamav,clear,clear-maldet,clear-clamav"
+    LONG_OPTS="view,show,view-maldet,view-clamav,show-maldet,view-clamav,edit,edit-maldet,edit-clamav,clear,clear-maldet,clear-clamav,update-clamav-signature"
     OPTIONS=$(getopt -o "${SHORT_OPTS}" --long "${LONG_OPTS}" -n "[${SCRIPT_NAME}]" -- "$@")
     RETVAL=$?
     if [ ${RETVAL} != 0 ]; then
@@ -835,7 +849,17 @@ while [ "$#" -gt 0 ]; do
         ;;
       --edit-clamav)
         AV_TYPE="clamav"
-        nano -c "${IGN_SIGN_FILE}"
+
+        nano -c "${TEMP_IGN_SIGN_FILE}"
+        if cmp --silent -- "${TEMP_IGN_SIGN_FILE}" "${IGN_SIGN_FILE}"; then
+          :
+          # echo "[${SCRIPT_NAME}]: [Skipped] The excluded signatures are identical to the existing"
+        else
+          _confirm "[${SCRIPT_NAME}]: The custom excluded signatures file has changed. Do you want to update the list?" y
+          echo -n "[${SCRIPT_NAME}]: Copying clamav excluded signature from ${TEMP_IGN_SIGN_FILE} into [ ${IGN_SIGN_FILE} ] ..."
+          cp "${TEMP_IGN_SIGN_FILE}" "${IGN_SIGN_FILE}"
+          get_status_message "$?"
+        fi
         av_sign_list
         exit 0
         break
@@ -850,7 +874,8 @@ while [ "$#" -gt 0 ]; do
       --clear-clamav)
         AV_TYPE="clamav"
         _confirm "Are you sure you want to clear all the ignored signature list of clamav at ${IGN_SIGN_FILE}? "
-        cat /dev/null >"${IGN_SIGN_FILE}"
+        cat /dev/null >"${TEMP_IGN_SIGN_FILE}"
+        cp "${TEMP_IGN_SIGN_FILE}" "${IGN_SIGN_FILE}"
         get_status_message "$?"
         break
         ;;
@@ -862,6 +887,13 @@ while [ "$#" -gt 0 ]; do
       --view-clamav | --show-clamav)
         AV_TYPE="clamav"
         av_sign_list
+        break
+        ;;
+      # Special command for clamAV to update signature from temporary signature list
+      --update-clamav-signature)
+          echo -n "[${SCRIPT_NAME}]: Copying clamav excluded signature from ${TEMP_IGN_SIGN_FILE} into [ ${IGN_SIGN_FILE} ] ..."
+          cp "${TEMP_IGN_SIGN_FILE}" "${IGN_SIGN_FILE}"
+          get_status_message "$?"
         break
         ;;
       --)
@@ -933,16 +965,16 @@ while [ "$#" -gt 0 ]; do
     ;;
   # For maldet scanner (scan)
   scan | maldet)
-    BIN_DEPS="maldet"
-    for BIN_DEP in $BIN_DEPS; do
-      which "${BIN_DEP}" >/dev/null ||
-        NOT_FOUND="${BIN_DEP} ${NOT_FOUND}"
-    done
+      BIN_DEPS="maldet"
+      for BIN_DEP in $BIN_DEPS; do
+        which "${BIN_DEP}" >/dev/null ||
+          NOT_FOUND="${BIN_DEP} ${NOT_FOUND}"
+      done
 
-    if [ -n "${NOT_FOUND}" ]; then
-      echo -e "Error: Required program could not be found: ${NOT_FOUND}"
-      exit 1
-    fi
+      if [ -n "${NOT_FOUND}" ]; then
+        echo -e "Error: Required program could not be found: ${NOT_FOUND}"
+        exit 1
+      fi
     SHORT_OPTS="j,e,p:"
     LONG_OPTS="cron,cronjob,email,path:,scan-path:"
     OPTIONS=$(getopt -o "${SHORT_OPTS}" --long "${LONG_OPTS}" -n "[${SCRIPT_NAME}]" -- "$@")
@@ -991,16 +1023,16 @@ while [ "$#" -gt 0 ]; do
     ;;
   # legacy scan for clamav scanner (scanx)
   scanx | clamav)
-    BIN_DEPS="clamscan"
-    for BIN_DEP in $BIN_DEPS; do
-      which "${BIN_DEP}" >/dev/null ||
-        NOT_FOUND="${BIN_DEP} ${NOT_FOUND}"
-    done
+      BIN_DEPS="clamscan"
+      for BIN_DEP in $BIN_DEPS; do
+        which "${BIN_DEP}" >/dev/null ||
+          NOT_FOUND="${BIN_DEP} ${NOT_FOUND}"
+      done
 
-    if [ -n "${NOT_FOUND}" ]; then
-      echo -e "Error: Required program could not be found: ${NOT_FOUND}"
-      exit 1
-    fi
+      if [ -n "${NOT_FOUND}" ]; then
+        echo -e "Error: Required program could not be found: ${NOT_FOUND}"
+        exit 1
+      fi
     SHORT_OPTS="j,v,d,q,e,p:,i"
     LONG_OPTS="cron,cronjob,verbose,debug,quiet,email,path:,scan-path:,infected,show-infected-only"
     OPTIONS=$(getopt -o "${SHORT_OPTS}" --long "${LONG_OPTS}" -n "[${SCRIPT_NAME}]" -- "$@")
