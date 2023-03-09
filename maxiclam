@@ -499,6 +499,20 @@ fi
 CLAMAV_USER_PERM="clamav"
 CLAMAV_GROUP_PERM="clamav"
 
+# Check if clamav group exists
+if ! getent group "${CLAMAV_GROUP_PERM}" >/dev/null; then
+    # Create clamav group
+    sudo groupadd "${CLAMAV_GROUP_PERM}"
+    echo "${CLAMAV_GROUP_PERM} group created."
+fi
+
+# Check if clamav user exists
+if ! id ${CLAMAV_USER_PERM} >/dev/null 2>&1; then
+    # Create clamav user with clamav group as primary group
+    sudo useradd -g ${CLAMAV_GROUP_PERM} -s /bin/false -c "Clam Antivirus" ${CLAMAV_USER_PERM}
+    echo "${CLAMAV_USER_PERM} user created for group ${CLAMAV_GROUP_PERM}."
+fi
+
 MALDET_PATH="/usr/local/maldetect"
 # File to ignore extension list for clamav
 IGN_EXT_FILE="${CONFIG_PATH}/ext.ign"
@@ -519,6 +533,8 @@ MALDET_IGN_PATH_FILE="${MALDET_PATH}/ignore_paths"
 MALDET_IGN_SIGN_FILE="${MALDET_PATH}/ignore_sigs"
 # File to ignore inotify list for maldet
 MALDET_IGN_INOTIFY_FILE="${MALDET_PATH}/ignore_inotify"
+
+mkdir -p "${MALDET_PATH}"
 
 touch "${IGN_EXT_FILE}"
 touch "${IGN_DIR_FILE}"
